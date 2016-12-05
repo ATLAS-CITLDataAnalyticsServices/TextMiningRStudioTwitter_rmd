@@ -1,0 +1,276 @@
+---
+title: 'Introduction to Text Mining with R:  Twitter Data Analysis'
+author: "ATLAS-CITL Data Analytics Services"
+output: word_document
+---
+
+
+```{r, echo=FALSE, warning=FALSE,message=FALSE}
+library(knitr) #
+opts_chunk$set(fig.width=6, fig.height=6,cache=FALSE)
+```
+
+
+Introduction
+===
+
+This document is aimed to extend our first text mining analysis tutorial. This time, we will use data from twitter web applications and its interaction with R to analyze twitter data. We will do the following:
+
+* Authenticate our twitter account in its developers branch so we can use twitter data
+* Loading Packages needed for text manipulation and mining in Twitter
+* Text cleaning
+* Find frequent words and associations
+* Visualize word frequencies with bar plots and wordclouds 
+* Cluster our twitter data using k-means function
+* Topic Modelling
+
+
+Installing and Loading Packages
+=====
+
+Open R studio, and install the packages below. Please, notice that the installation code is commented (#) because we have these packages already installed. If this is the first time the user is installing these packages, please uncomment them. 
+
+```{r, warning=FALSE, message=FALSE, results='hide',cache=FALSE}
+#devtools::install_github("rstudio/rmarkdown")
+
+#find_rtools()
+install.packages(c("devtools", "rjson", "bit64", "httr"))
+library(devtools)
+install.packages("data.table")
+library(data.table)
+install.packages("RColorBrewer")
+library(RColorBrewer)
+install.packages("topicmodels")
+library(topicmodels)
+install_github("twitteR",username="geoffjentry")
+library(twitteR)
+install.packages('base64enc')
+library(base64enc)
+install.packages("SnowballC")
+library(SnowballC)
+#install.packages("graph")
+#library(graph)
+#install.packages("Rgraphviz")
+#library(Rgraphviz)
+source("http://bioconductor.org/biocLite.R")
+biocLite("Rgraphviz")
+library(tm)
+install.packages("wordcloud")
+library(wordcloud)
+library(ggplot2)
+
+```
+
+
+Setting up the twitter developers account
+=====
+
+In order to retrieve information from twitter, we have to sign up to the developer's site for Twitter and create an app. Apps have to be created for every data request we do. In this case, we are using one of our consultants account.
+
+In order to create an app, we should go to https://dev.twitter.com/ and log in with our own Twitter Account. Then, on the left corner of the screen we will see a drop-down menu called "Developers". We should choose the option "Documentation". At the end of the options located on the left side of the screen, choose Manage my Apps. Finally, click on "Create New App".
+
+Fill out the application details as you wish, except for the Website section in which Twitter requires a valid URL for the it. It could be your personal website/blog or your university website (if you have one). click "Yes, I agree" at the end of the screen and you will have your application ready to work in R.
+
+
+Twitter authentication: setting up the twitter oauth
+===
+
+First we have to get your api_key and your api_secret as well as your access_token, and access_token_secret from our app settings on Twitter. Just click on the "API key" tab to see them. If you want to double check if the authentication was successful this code catches some tweets from your device.
+
+```{r, cache=FALSE}
+api_key = "tS3x0GEDfmYVgVGKc1qrEfwbl"
+api_secret = "yEHc8ZUzlQpXoOCzzlaC8kTr4dO9TMKDRwKHV0swfQiL4sORlj"
+access_token = "102882917-CLgWymZcuCTibHJXHhyWJOhBKJbWqv10mx30d61p"
+access_token_secret = "3k115uom9njmS7Wou9gj576ZlBnGH9vqArKcj3WvKO3Nh"
+setup_twitter_oauth(api_key,api_secret,access_token,access_token_secret)
+
+#searchTwitter("iphone") # If the user would like to test the previous code, uncomment.
+```
+
+
+Extracting and Formatting Tweets
+===
+
+Before analysis in R, we need to extract tweets from an active twitter account in the user timeline. In this case, we extracted the 3200 most recent tweets from @BBCBreaking. Notice that  there is less tweets than 3200, but we continue the analysis as the number of tweets is enough. 
+
+```{r, cache=FALSE}
+
+tweets=userTimeline("BBCBreaking",n=3200) #retrieves 3200 tweets
+n.tweet=length(tweets) #length of the tweets
+
+tweets.df=twListToDF(tweets) #converts the tweets to a data frame
+dim(tweets.df)
+
+for (i in c(1:2, 710)) {
+cat(paste0("[", i, "] "))
+writeLines(strwrap(tweets.df$text[i], 60)) #formats paragraphs to contain up to 60 characters
+}
+```
+
+Text cleaning
+======
+
+At this stage we need to clean our tweets. For that purpose, we need first to build a courpus and specify the source to be character vectors. A corpus is large and structured set of texts ready to be analyzed. Ours is a monolingual corpus (english). This corpus will be our prime material for the text analysis, so it must be cleaned rigorously. Once we have it, we need to convert every text to lower case, remove urls, and also clean non-English words, undesirable spaces, and punctuation.  
+
+```{r, cache=FALSE}
+myCorpus=Corpus(VectorSource(tweets.df$text)) #creates a corpus
+
+myCorpus=tm_map(myCorpus, content_transformer(tolower)) #converts the corpus to lower case
+
+removeURL=function(x) gsub("http[^[:space:]]*", "", x) #creates a function to remove URLs
+myCorpus=tm_map(myCorpus, content_transformer(removeURL)) #uses the function created to remove the urls
+
+removeNumPunct=function(x) gsub("[^[:alpha:][:space:]]*", "", x) #creates a function to remove anything other than English and clear spaces.
+myCorpus=tm_map(myCorpus, content_transformer(removeNumPunct)) #uses the function to remove spaces and non-English words 
+
+myStopwords=c(stopwords('english'), "available", "via", "say", "saying", "says", "said") # adds extra stop words from the built in pool
+
+myCorpus=tm_map(myCorpus, removeWords, myStopwords) #removes stopwords from corpus
+
+myCorpus=tm_map(myCorpus, stripWhitespace) #removes extra whitespace, if any
+
+myCorpusCopy=myCorpus #keeps a copy of corpus to use later as a dictionary for stem completion
+
+myCorpus=tm_map(myCorpus, stemDocument) #finds the stem of the words. Finds different variations of key terms from their root/stem.
+
+inspect(myCorpus[1:5]) #inspects the first 5 tweets
+
+for (i in c(1:2, 320)) {
+cat(paste0("[", i, "] "))
+writeLines(strwrap(as.character(myCorpus[[i]]), 60)) #makes text fit for paper width
+}
+
+stemCompletion2 = function(x, dictionary) {
+  x = unlist(strsplit(as.character(x), " "))
+  x = x[x != ""]
+  x = stemCompletion(x, dictionary=dictionary)
+  x = paste(x, sep="", collapse=" ")
+  PlainTextDocument(stripWhitespace(x))
+}
+myCorpus = lapply(myCorpus, stemCompletion2, dictionary=myCorpusCopy)
+myCorpus = Corpus(VectorSource(myCorpus))
+
+```
+
+
+Frequent words, associations and world cloud
+====
+
+In this section we evaluate key words repetition and their association. In the first subsection, we work only two words sharing the same stem: 'dead' and 'death'. Also we plot a bar graph based on our data frame. In addition to this, and wol
+
+```{r}
+
+DeadCases = lapply(myCorpusCopy,
+                      function(x) { grep(as.character(x), pattern = "\\<dead")} ) #counts frequency of word "dead"
+sum(unlist(DeadCases))
+
+DeathCases = lapply(myCorpusCopy,
+                     function(x) {grep(as.character(x), pattern = "\\<death")} ) #counts frequency of word "death"
+sum(unlist(DeathCases))
+
+myCorpus = tm_map(myCorpus, content_transformer(gsub),
+                   pattern = "dead", replacement = "death") #replaces "dead" with "death" in corpus for further association work
+
+tdm = TermDocumentMatrix(myCorpus,
+                          control = list(wordLengths = c(1, Inf))) #creates a matrix for the words association work
+tdm
+
+idx = which(dimnames(tdm)$Terms == "syria")
+inspect(tdm[idx + (0:5), 101:110]) # finds the association of the specified word by its stem, from the 101 to the 110 line
+
+(freq.terms = findFreqTerms(tdm, lowfreq = 15)) #inspects frequent words
+
+term.freq = rowSums(as.matrix(tdm))
+term.freq = subset(term.freq, term.freq >= 15)
+df = data.frame(term = names(term.freq), freq = term.freq) #creates a term frequencies oject and transforms it into a data frame
+
+ggplot(df, aes(x = term, y = freq)) + geom_bar(stat = "identity") +
+  xlab("Terms") + ylab("Count") + coord_flip() #uses the data frame to plot the bar graph
+
+findAssocs(tdm, "european", 0.2) #which words are associated with 'european'. The number 0.2 means the minimum correlation to assume association.
+
+findAssocs(tdm, "syria", 0.2) #which words are associated with 'syria'. The number 0.2 means the minimum correlation to assume association.
+
+```
+
+
+Graphs and World Cloud
+-----
+
+Once we have our matrix of association ready, we proceed to graph our results. We begin with a bar plot, followed by the classic word cloud.
+
+```{r, echo=TRUE, warning=FALSE}
+
+plot(tdm,terms=sample(freq.terms, 10),corThreshold=0.2, weighting=T) # plots the association bar graph
+
+m <- as.matrix(tdm) #creates a matrix from our term document matrix which is the necessary input for the world cloud.
+
+word.freq <- sort(rowSums(m), decreasing = T) #calculates the frequency of words and sort it by frequency
+
+pal <- brewer.pal(9, "BuGn") #deals with colors choice
+pal <- pal[-(1:4)]
+
+# plot word cloud
+library(wordcloud)
+wordcloud(words = names(word.freq), freq = word.freq, min.freq = 3,
+          random.order = F, colors = pal)
+
+```
+
+
+Clustering
+====
+
+What is clustering?
+Clustering is a process of dividing a data into a number of meaningful sub-classes, called clusters. In doing so, the data may potentially show a grouping structure. 
+
+```{r, echo=TRUE}
+
+tdm2 = removeSparseTerms(tdm, sparse = 0.95) #remove sparse terms. Sparsity is 0.95. The closer to 1, the smaller the sparcity.
+m2 = as.matrix(tdm2)
+
+distMatrix = dist(scale(m2)) #creates a distance matrix to cluster the terms
+fit = hclust(distMatrix, method = "ward.D") #clusters terms via the ward.D method
+plot(fit)
+rect.hclust(fit, k = 3) #cut the tree into 3 clusters
+
+m3 <- t(m2) # transpose the matrix to cluster documents (tweets)
+set.seed(122) # set a fixed random seed
+k <- 3 # number of clusters
+kmeansResult <- kmeans(m3, k)
+round(kmeansResult$centers, digits = 3) # cluster centers
+
+
+for (i in 1:k) {
+  cat(paste("cluster ", i, ": ", sep = ""))
+  s <- sort(kmeansResult$centers[i, ], decreasing = T)
+  cat(names(s)[1:5], "\n")
+  # print the tweets of every cluster
+  # print(tweets[which(kmeansResult?cluster==i)])
+}
+
+```
+
+
+Topic Modelling
+=======
+
+Topic modelling refers to the process of discovering "topics" that occur in a text of group of texts. High frequencies of certain words for a particular topic are expected. For instance, if the topic is about midwestern birds species, words like 'robin' and 'raven' would be expected to appear more frequently.
+
+```{r}
+#Topic modelling
+dtm <- as.DocumentTermMatrix(tdm)
+lda <- LDA(dtm, k = 8) # find 8 topics
+(term <- terms(lda, 6)) # first 6 terms of every topic
+term <- apply(term, MARGIN = 2, paste, collapse = ", ")
+
+
+# first topic identified for every document (tweet)
+topic <- topics(lda, 1)
+topics <- data.frame(date=as.IDate(tweets.df$created), topic)
+qplot(date, ..count.., data=topics, geom="density",
+      fill=term[topic], position="stack")
+
+```
+
+
